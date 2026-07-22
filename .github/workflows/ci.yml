@@ -2,9 +2,10 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, integration/product-baseline]
   push:
-    branches: [main]
+    branches: [main, integration/product-baseline]
+  workflow_dispatch:
 
 # Cancel older CI runs for the same branch when a new commit arrives —
 # saves minutes when someone pushes a stack of fixes to one PR.
