@@ -4,15 +4,17 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { ListTodo, UserRound } from 'lucide-react';
 
+import { useCrmNotifications } from '@/hooks/use-crm-notifications';
 import { cn } from '@/lib/utils';
 
 const shortcuts = [
-  { href: '/tasks', label: 'Meu dia', icon: ListTodo },
-  { href: '/leads', label: 'Leads', icon: UserRound },
+  { href: '/tasks', label: 'Meu dia', icon: ListTodo, showsNotifications: true },
+  { href: '/leads', label: 'Leads', icon: UserRound, showsNotifications: false },
 ];
 
 export function CrmShortcuts() {
   const pathname = usePathname();
+  const { count } = useCrmNotifications();
 
   return (
     <nav
@@ -39,6 +41,19 @@ export function CrmShortcuts() {
           >
             <Icon className="size-4" />
             {item.label}
+            {item.showsNotifications && count > 0 ? (
+              <span
+                aria-label={`${count} tarefa${count === 1 ? '' : 's'} pendente${count === 1 ? '' : 's'}`}
+                className={cn(
+                  'inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold',
+                  active
+                    ? 'bg-primary-foreground/15 text-primary-foreground'
+                    : 'bg-red-500/15 text-red-300',
+                )}
+              >
+                {count > 99 ? '99+' : count}
+              </span>
+            ) : null}
           </Link>
         );
       })}
