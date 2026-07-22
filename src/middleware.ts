@@ -69,8 +69,22 @@ export async function middleware(request: NextRequest) {
     return withRefreshedCookies(NextResponse.redirect(url))
   }
 
-  // Protected pages - redirect to login if not authenticated
-  const protectedPaths = ['/dashboard', '/inbox', '/contacts', '/pipelines', '/broadcasts', '/automations', '/settings']
+  // Protected pages - redirect to login if not authenticated. Keep this
+  // list aligned with every authenticated top-level feature in the sidebar.
+  // The test suite covers the full matrix so a newly added private module
+  // cannot silently become public because it was omitted here.
+  const protectedPaths = [
+    '/dashboard',
+    '/inbox',
+    '/contacts',
+    '/pipelines',
+    '/broadcasts',
+    '/automations',
+    '/flows',
+    '/notifications',
+    '/agents',
+    '/settings',
+  ]
   if (!user && protectedPaths.some(path => request.nextUrl.pathname.startsWith(path))) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
