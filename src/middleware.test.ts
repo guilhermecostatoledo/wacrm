@@ -53,6 +53,50 @@ const ROTATED = {
   options: { path: "/", httpOnly: true },
 };
 
+const PROTECTED_PATHS = [
+  "/dashboard",
+  "/inbox",
+  "/contacts",
+  "/pipelines",
+  "/broadcasts",
+  "/automations",
+  "/flows",
+  "/notifications",
+  "/agents",
+  "/settings",
+] as const;
+
+describe("middleware — protected feature routes", () => {
+  it.each(PROTECTED_PATHS)(
+    "redirects an unauthenticated request for %s to /login",
+    async (path) => {
+      const res = await middleware(new NextRequest(`https://app.test${path}`));
+
+      expect(res.status).toBe(307);
+      expect(res.headers.get("location")).toContain("/login");
+    },
+  );
+
+  it.each(PROTECTED_PATHS)(
+    "allows an authenticated request for %s",
+    async (path) => {
+      mockUser = { id: "user-1" };
+
+      const res = await middleware(new NextRequest(`https://app.test${path}`));
+
+      expect(res.headers.get("location")).toBeNull();
+    },
+  );
+
+  it("keeps the public invitation redemption page accessible", async () => {
+    const res = await middleware(
+      new NextRequest("https://app.test/join/invite-token"),
+    );
+
+    expect(res.headers.get("location")).toBeNull();
+  });
+});
+
 describe("middleware — refreshed auth cookies survive redirects", () => {
   it("carries the rotated token when redirecting a signed-in user off /login", async () => {
     mockUser = { id: "user-1" };
