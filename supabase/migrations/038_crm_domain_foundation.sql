@@ -9,6 +9,7 @@
 --   - every new domain row is account-scoped and RLS protected;
 --   - contact archival is transactional and audited;
 --   - lead/task state changes are validated by the database;
+--   - assignees must belong to the same account;
 --   - existing deals and notes are migrated without deleting history;
 --   - authenticated hard deletes remain disabled.
 --
@@ -189,10 +190,10 @@ CREATE TABLE IF NOT EXISTS public.leads (
     REFERENCES public.contacts(account_id, id) ON DELETE RESTRICT,
   CONSTRAINT leads_source_account_fkey
     FOREIGN KEY (account_id, source_id)
-    REFERENCES public.lead_sources(account_id, id) ON DELETE SET NULL,
+    REFERENCES public.lead_sources(account_id, id) ON DELETE RESTRICT,
   CONSTRAINT leads_disqualification_reason_account_fkey
     FOREIGN KEY (account_id, disqualification_reason_id)
-    REFERENCES public.lead_disqualification_reasons(account_id, id) ON DELETE SET NULL,
+    REFERENCES public.lead_disqualification_reasons(account_id, id) ON DELETE RESTRICT,
   CONSTRAINT leads_owner_or_queue_check CHECK (
     status IN ('converted', 'disqualified') OR owner_id IS NOT NULL OR queue_key IS NOT NULL
   ),
@@ -207,8 +208,7 @@ CREATE TABLE IF NOT EXISTS public.leads (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_leads_account_external_key
-  ON public.leads(account_id, external_key)
-  WHERE external_key IS NOT NULL;
+  ON public.leads(account_id, external_key);
 CREATE INDEX IF NOT EXISTS idx_leads_account_status_owner
   ON public.leads(account_id, status, owner_id)
   WHERE archived_at IS NULL;
@@ -260,8 +260,7 @@ CREATE TABLE IF NOT EXISTS public.activities (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_activities_legacy_source
-  ON public.activities(account_id, legacy_source, legacy_id)
-  WHERE legacy_source IS NOT NULL AND legacy_id IS NOT NULL;
+  ON public.activities(account_id, legacy_source, legacy_id);
 CREATE INDEX IF NOT EXISTS idx_activities_contact_occurred
   ON public.activities(account_id, contact_id, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_activities_lead_occurred
@@ -295,7 +294,7 @@ CREATE TABLE IF NOT EXISTS public.tasks (
   completion_outcome TEXT,
   cancellation_reason TEXT,
   recurrence_rule TEXT,
-  parent_task_id UUID REFERENCES public.tasks(id) ON DELETE SET NULL,
+  parent_task_id UUID,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   archived_at TIMESTAMPTZ,
@@ -311,13 +310,17 @@ CREATE TABLE IF NOT EXISTS public.tasks (
   CONSTRAINT tasks_conversation_account_fkey
     FOREIGN KEY (account_id, conversation_id)
     REFERENCES public.conversations(account_id, id) ON DELETE RESTRICT,
+  CONSTRAINT tasks_parent_account_fkey
+    FOREIGN KEY (account_id, parent_task_id)
+    REFERENCES public.tasks(account_id, id) ON DELETE RESTRICT,
   CONSTRAINT tasks_completed_state_check CHECK (
     status <> 'completed' OR completed_at IS NOT NULL
   ),
   CONSTRAINT tasks_cancelled_state_check CHECK (
     status <> 'cancelled'
     OR (cancelled_at IS NOT NULL AND NULLIF(btrim(cancellation_reason), '') IS NOT NULL)
-  )
+  ),
+  UNIQUE(account_id, id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_account_assignee_due
@@ -495,7 +498,7 @@ BEGIN
     ALTER TABLE public.deals
       ADD CONSTRAINT deals_loss_reason_account_fkey
       FOREIGN KEY (account_id, loss_reason_id)
-      REFERENCES public.opportunity_loss_reasons(account_id, id) ON DELETE SET NULL;
+      REFERENCES public.opportunity_loss_reasons(account_id, id) ON DELETE RESTRICT;
   END IF;
 END $$;
 
@@ -527,8 +530,46 @@ FROM public.contact_notes n
 ON CONFLICT (account_id, legacy_source, legacy_id) DO NOTHING;
 
 -- ============================================================
--- STATE TRANSITION GUARDS
+-- STATE / MEMBERSHIP GUARDS
 -- ============================================================
+CREATE OR REPLACE FUNCTION public.enforce_crm_assignee_membership()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_row JSONB := to_jsonb(NEW);
+  v_target UUID;
+BEGIN
+  v_target := CASE TG_TABLE_NAME
+    WHEN 'leads' THEN NULLIF(v_row->>'owner_id', '')::uuid
+    WHEN 'tasks' THEN NULLIF(v_row->>'assigned_to', '')::uuid
+    ELSE NULL
+  END;
+
+  IF v_target IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM public.profiles p
+    WHERE p.user_id = v_target AND p.account_id = NEW.account_id
+  ) THEN
+    RAISE EXCEPTION 'Assignee must be an account member'
+      USING ERRCODE = 'foreign_key_violation';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+ALTER FUNCTION public.enforce_crm_assignee_membership() OWNER TO postgres;
+DROP TRIGGER IF EXISTS enforce_lead_owner_membership ON public.leads;
+CREATE TRIGGER enforce_lead_owner_membership
+  BEFORE INSERT OR UPDATE OF owner_id, account_id ON public.leads
+  FOR EACH ROW EXECUTE FUNCTION public.enforce_crm_assignee_membership();
+DROP TRIGGER IF EXISTS enforce_task_assignee_membership ON public.tasks;
+CREATE TRIGGER enforce_task_assignee_membership
+  BEFORE INSERT OR UPDATE OF assigned_to, account_id ON public.tasks
+  FOR EACH ROW EXECUTE FUNCTION public.enforce_crm_assignee_membership();
+
 CREATE OR REPLACE FUNCTION public.enforce_lead_status_transition()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -654,6 +695,10 @@ BEGIN
     THEN
       RAISE EXCEPTION 'Activity corrections require corrected_at, corrected_by and correction_reason'
         USING ERRCODE = 'check_violation';
+    END IF;
+    IF current_user = 'authenticated' AND NEW.corrected_by IS DISTINCT FROM auth.uid() THEN
+      RAISE EXCEPTION 'corrected_by must match the authenticated user'
+        USING ERRCODE = 'insufficient_privilege';
     END IF;
   END IF;
 
