@@ -1,16 +1,5 @@
 // ============================================================
 // API key scopes — pure, unit-testable, no I/O.
-//
-// Authorization for the public API is *scopes-only*: a key's
-// capabilities are defined entirely by the scopes granted to it at
-// creation, independent of the role of the user who minted it. (We
-// still gate *key creation* at admin+, so only trusted members can
-// hand out capabilities — see the management routes.)
-//
-// A scope is `<resource>:<action>`. Endpoints declare the single
-// scope they require; `requireApiKey(request, scope)` enforces it.
-// Adding a capability = one entry here + the endpoint that checks
-// it. No migration needed (the DB stores scopes as a free `text[]`).
 // ============================================================
 
 export const API_SCOPES = [
@@ -25,6 +14,8 @@ export const API_SCOPES = [
   'opportunities:read',
   'opportunities:write',
   'opportunities:close',
+  'campaigns:read',
+  'campaigns:write',
   'conversations:read',
   'broadcasts:send',
   'webhooks:manage',
@@ -32,7 +23,6 @@ export const API_SCOPES = [
 
 export type ApiScope = (typeof API_SCOPES)[number];
 
-/** Human-readable descriptions, surfaced in the key-creation UI. */
 export const SCOPE_DESCRIPTIONS: Record<ApiScope, string> = {
   'messages:send': 'Send WhatsApp messages',
   'messages:read': 'Read messages and their delivery status',
@@ -45,12 +35,13 @@ export const SCOPE_DESCRIPTIONS: Record<ApiScope, string> = {
   'opportunities:read': 'List and read opportunities',
   'opportunities:write': 'Create and move opportunities',
   'opportunities:close': 'Mark opportunities won, lost or reopen them',
+  'campaigns:read': 'List campaigns and attribution results',
+  'campaigns:write': 'Create campaigns and record marketing touchpoints',
   'conversations:read': 'List and read conversations',
   'broadcasts:send': 'Launch broadcast campaigns',
   'webhooks:manage': 'Register and manage outbound event webhooks',
 };
 
-/** Type-narrow an unknown value into a valid `ApiScope`. */
 export function isApiScope(value: unknown): value is ApiScope {
   return (
     typeof value === 'string' &&
@@ -58,13 +49,6 @@ export function isApiScope(value: unknown): value is ApiScope {
   );
 }
 
-/**
- * Validate and de-duplicate a caller-supplied scope list. Returns
- * the cleaned list, or `null` if any entry is not a known scope
- * (callers turn that into a 400). An empty input is valid — it
- * yields a key that authenticates but can't do anything beyond the
- * scope-free endpoints (e.g. `GET /api/v1/me`).
- */
 export function normalizeScopes(input: unknown): ApiScope[] | null {
   if (!Array.isArray(input)) return null;
   const out: ApiScope[] = [];
@@ -75,12 +59,6 @@ export function normalizeScopes(input: unknown): ApiScope[] | null {
   return out;
 }
 
-/**
- * True iff `granted` contains `required`. The single source of
- * truth for "is this key allowed to do X?" — both `requireApiKey`
- * and any future inline check should call this rather than poking
- * at the array directly.
- */
 export function hasScope(
   granted: readonly string[],
   required: ApiScope
