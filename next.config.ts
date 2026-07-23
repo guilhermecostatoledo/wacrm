@@ -64,6 +64,11 @@ const SECURITY_HEADERS = [
 ] as const;
 
 const nextConfig: NextConfig = {
+  // Produces `.next/standalone/server.js`, allowing the production image
+  // to contain only the traced runtime files instead of the full source
+  // tree and development dependencies.
+  output: "standalone",
+
   /**
    * Cross-origin dev access (Next.js 16).
    *

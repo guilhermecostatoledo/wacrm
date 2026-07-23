@@ -1,0 +1,36 @@
+# Dependency and build output
+node_modules
+.next
+coverage
+.turbo
+
+# Source-control and editor metadata
+.git
+.github/ISSUE_TEMPLATE
+.vscode
+.idea
+*.swp
+*.swo
+.DS_Store
+
+# Local logs and temporary files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+tmp
+temp
+
+# Never send local credentials to the Docker daemon/build cache
+.env
+.env.*
+!.env.local.example
+!.env.docker.example
+
+# Local deployment data and archives
+*.zip
+*.tar
+*.tar.gz
+backups
+volumes

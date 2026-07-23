@@ -7,29 +7,22 @@ on:
     branches: [main, integration/product-baseline, 'block/**']
   workflow_dispatch:
 
-# Cancel older CI runs for the same branch when a new commit arrives —
-# saves minutes when someone pushes a stack of fixes to one PR.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   check:
-    name: Lint, typecheck, test, build
+    name: Lint, typecheck, test, release check, build
     runs-on: ubuntu-latest
-    # Dummy env vars so `next build` doesn't fail when it reads the
-    # public Supabase config at build time. These never leave CI and
-    # never hit a real service — they just satisfy the `!` non-null
-    # assertions in the client factories. ENCRYPTION_KEY and
-    # META_APP_SECRET are read at module-load by lib/whatsapp/*; the
-    # test suite asserts behaviour around these values, so any non-
-    # empty placeholder works as long as it stays consistent with
-    # vitest.config.ts.
     env:
       NEXT_PUBLIC_SUPABASE_URL: https://ci.example.supabase.co
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-dummy-anon-key
+      NEXT_PUBLIC_SITE_URL: http://localhost:3000
+      NEXT_PUBLIC_APP_LOCALE: en
+      SUPABASE_SERVICE_ROLE_KEY: ci-dummy-service-role-key
       ENCRYPTION_KEY: '0000000000000000000000000000000000000000000000000000000000000000'
-      META_APP_SECRET: 'ci-dummy-meta-secret'
+      META_APP_SECRET: ci-dummy-meta-secret
     steps:
       - uses: actions/checkout@v7
 
@@ -50,5 +43,64 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Release readiness
+        run: npm run release:check
+
       - name: Build
         run: npm run build
+
+  container:
+    name: Docker build and health smoke test
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Create CI environment
+        run: |
+          cat > .env <<'EOF'
+          WACRM_IMAGE=wacrm:ci
+          WACRM_PORT=3000
+          APP_RELEASE=ci-${{ github.sha }}
+          NEXT_PUBLIC_SUPABASE_URL=https://ci.example.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY=ci-dummy-anon-key
+          NEXT_PUBLIC_SITE_URL=http://localhost:3000
+          NEXT_PUBLIC_APP_LOCALE=en
+          SUPABASE_SERVICE_ROLE_KEY=ci-dummy-service-role-key
+          ENCRYPTION_KEY=0000000000000000000000000000000000000000000000000000000000000000
+          META_APP_SECRET=ci-dummy-meta-secret
+          EOF
+
+      - name: Validate Compose model
+        run: docker compose config --quiet
+
+      - name: Build production image
+        run: docker compose build --pull
+
+      - name: Start container and wait for health
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup() {
+            docker compose logs --no-color --tail=300 || true
+            docker compose down --volumes --remove-orphans || true
+          }
+          trap cleanup EXIT
+
+          docker compose up -d
+
+          for attempt in $(seq 1 30); do
+            status="$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}starting{{end}}' "$(docker compose ps -q wacrm)")"
+            if [ "$status" = "healthy" ]; then
+              curl --fail --silent --show-error http://127.0.0.1:3000/api/health
+              exit 0
+            fi
+            if [ "$status" = "unhealthy" ]; then
+              echo "Container became unhealthy"
+              exit 1
+            fi
+            sleep 2
+          done
+
+          echo "Container did not become healthy in time"
+          exit 1
