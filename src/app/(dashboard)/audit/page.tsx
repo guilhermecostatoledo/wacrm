@@ -102,6 +102,9 @@ export default function AuditPage() {
   );
 
   useEffect(() => {
+    // The callback starts an asynchronous request and intentionally synchronizes
+    // the loading state before its first await.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadFeed();
   }, [loadFeed]);
 
