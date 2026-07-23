@@ -48,32 +48,33 @@ function optionalText(value: unknown, maxLength: number): string | undefined {
   return text ? text.slice(0, maxLength) : undefined;
 }
 
+function parseRelatedUuid(
+  value: unknown,
+  field: string,
+): { ok: true; value?: string } | { ok: false; error: string } {
+  const parsed = optionalUuid(value, field);
+  if (parsed && typeof parsed !== "string") return { ok: false, error: parsed.error };
+  return { ok: true, value: parsed };
+}
+
 export function parseTaskCreateInput(raw: unknown): TaskCreateParseResult {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return { ok: false, error: "Request body must be a JSON object" };
   }
 
   const input = raw as Record<string, unknown>;
-  const contactId = optionalUuid(input.contact_id, "contact_id");
-  if (!contactId || typeof contactId !== "string") {
-    return {
-      ok: false,
-      error: contactId && "error" in contactId ? contactId.error : "'contact_id' is required",
-    };
-  }
+  const contact = parseRelatedUuid(input.contact_id, "contact_id");
+  if (!contact.ok) return contact;
+  if (!contact.value) return { ok: false, error: "'contact_id' is required" };
 
-  const related: Array<[keyof TaskCreateInput, string, unknown]> = [
-    ["leadId", "lead_id", input.lead_id],
-    ["opportunityId", "opportunity_id", input.opportunity_id],
-    ["conversationId", "conversation_id", input.conversation_id],
-    ["assignedTo", "assigned_to", input.assigned_to],
-  ];
-  const parsedRelated: Partial<TaskCreateInput> = {};
-  for (const [key, field, value] of related) {
-    const parsed = optionalUuid(value, field);
-    if (parsed && typeof parsed !== "string") return { ok: false, error: parsed.error };
-    if (typeof parsed === "string") parsedRelated[key] = parsed as never;
-  }
+  const lead = parseRelatedUuid(input.lead_id, "lead_id");
+  if (!lead.ok) return lead;
+  const opportunity = parseRelatedUuid(input.opportunity_id, "opportunity_id");
+  if (!opportunity.ok) return opportunity;
+  const conversation = parseRelatedUuid(input.conversation_id, "conversation_id");
+  if (!conversation.ok) return conversation;
+  const assignee = parseRelatedUuid(input.assigned_to, "assigned_to");
+  if (!assignee.ok) return assignee;
 
   const taskType = optionalText(input.task_type, 32) ?? "follow_up";
   if (!(TASK_TYPES as readonly string[]).includes(taskType)) {
@@ -106,8 +107,11 @@ export function parseTaskCreateInput(raw: unknown): TaskCreateParseResult {
   return {
     ok: true,
     value: {
-      contactId,
-      ...parsedRelated,
+      contactId: contact.value,
+      leadId: lead.value,
+      opportunityId: opportunity.value,
+      conversationId: conversation.value,
+      assignedTo: assignee.value,
       taskType: taskType as TaskType,
       title,
       description: optionalText(input.description, 4000),
