@@ -73,15 +73,16 @@ export default function AuditPage() {
   const [resolving, setResolving] = useState(false);
 
   const loadFeed = useCallback(
-    async (append = false) => {
+    async (options?: { append?: boolean; before?: string | null }) => {
       if (!accountId) return;
+      const append = options?.append === true;
       append ? setLoadingMore(true) : setLoading(true);
       setError(null);
       const supabase = createClient();
       const { data, error: rpcError } = await supabase.rpc("crm_audit_feed", {
         p_account_id: accountId,
         p_limit: 100,
-        p_before: append ? nextBefore : null,
+        p_before: options?.before ?? null,
         p_event_type: onlyFailures ? "whatsapp.dead_letter" : null,
         p_aggregate_type: aggregateType || null,
         p_actor_user_id: null,
@@ -97,13 +98,12 @@ export default function AuditPage() {
       setLoading(false);
       setLoadingMore(false);
     },
-    [accountId, aggregateType, nextBefore, onlyFailures],
+    [accountId, aggregateType, onlyFailures],
   );
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void loadFeed(false);
-  }, [accountId, aggregateType, onlyFailures]);
+    void loadFeed();
+  }, [loadFeed]);
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -149,7 +149,7 @@ export default function AuditPage() {
       toast.success("Dead letter marcada como resolvida");
       setResolveItem(null);
       setResolutionNotes("");
-      await loadFeed(false);
+      await loadFeed();
     }
     setResolving(false);
   }
@@ -164,7 +164,7 @@ export default function AuditPage() {
             Alterações de domínio e falhas de integração em uma linha do tempo imutável.
           </p>
         </div>
-        <Button variant="outline" onClick={() => loadFeed(false)}>
+        <Button variant="outline" onClick={() => loadFeed()}>
           <RefreshCw className="h-4 w-4" />
           Atualizar
         </Button>
@@ -220,7 +220,7 @@ export default function AuditPage() {
       {loading ? (
         <LoadingState label="Carregando auditoria..." />
       ) : error ? (
-        <ErrorState message={error} onRetry={() => loadFeed(false)} />
+        <ErrorState message={error} onRetry={() => loadFeed()} />
       ) : filtered.length === 0 ? (
         <EmptyState
           icon={ShieldCheck}
@@ -280,7 +280,11 @@ export default function AuditPage() {
 
           {nextBefore ? (
             <div className="flex justify-center pt-2">
-              <Button variant="outline" disabled={loadingMore} onClick={() => loadFeed(true)}>
+              <Button
+                variant="outline"
+                disabled={loadingMore}
+                onClick={() => loadFeed({ append: true, before: nextBefore })}
+              >
                 <ChevronDown className="h-4 w-4" />
                 {loadingMore ? "Carregando..." : "Carregar mais"}
               </Button>
